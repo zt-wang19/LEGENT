@@ -15,6 +15,12 @@ from legent.scene_generation.small_objects import add_small_objects
 from legent.server.rect_placer import RectPlacer
 from legent.utils.io import log
 from legent.utils.math import look_rotation
+from legent.scene_generation.utils import (
+    get_objaverse_object,
+    objaverse_path,
+    WALL_MATERIALS,
+    FLOOR_MATERIALS,
+)
 
 from .asset_groups import Asset
 from .constants import (
@@ -54,6 +60,7 @@ class HouseGenerator:
         self.unit_size = unit_size
         self.half_unit_size = unit_size / 2  # Half of the size of a unit in the grid
         self.scale_ratio = unit_size / DEFAULT_FLOOR_SIZE
+        self.wall_height = 3
 
     def generate_structure(self, room_spec):
         house_structure = generate_house_structure(
@@ -72,11 +79,6 @@ class HouseGenerator:
         }
         return object
 
-    def align_wall_height_scale(self, wall_prefab):
-        wall_y_size = self.odb.PREFABS[wall_prefab]["size"]["y"]
-        scale = 3 / wall_y_size
-        return scale
-
     def add_floors_and_walls(
         self,
         house_structure,
@@ -89,9 +91,11 @@ class HouseGenerator:
         room_num = len(room_spec.room_type_map)
         room_ids = set(room_spec.room_type_map.keys())
 
-        floor_materials = ["#FFFFFF"]
-        floor_material = random.choice(floor_materials)
-        wall_material = floor_material
+        # floor_materials = ["#FFFFFF"]
+        # floor_material = random.choice(FLOOR_MATERIALS)
+        # wall_material = random.choice(WALL_MATERIALS)
+        floor_material = "#FFFFFF"
+        wall_material = "#FFFFFF"
 
         door_prefab = "LowPolyInterior2_Door1_C1"
         door_x_size = prefabs[door_prefab]["size"]["x"]
@@ -100,7 +104,7 @@ class HouseGenerator:
 
         floor_thickness = 0.2
         wall_thickness = 0.05
-        wall_height = 3
+        wall_height = self.wall_height
 
         floors = house_structure.floorplan
         # convert 1 in floors to 0
@@ -137,8 +141,20 @@ class HouseGenerator:
                 "size": [floor_x_size, floor_thickness, floor_z_size],
                 "rotation": [0, 0, 0],
                 "material": floor_material,
-            }
+            },
         ]
+        add_ceiling = True
+        if add_ceiling:
+            res['floors'].append({
+                "position": [
+                    floor_center_x,
+                    wall_height + floor_thickness / 2,
+                    floor_center_z,
+                ],
+                "size": [floor_x_size, floor_thickness, floor_z_size],
+                "rotation": [180, 0, 0],
+                "material": floor_material,
+            })
 
         walls = []
         door_holes = []
@@ -155,11 +171,14 @@ class HouseGenerator:
                     end_point_x = i * self.unit_size
                     end_point_z = j * self.unit_size
 
+                    out = True if floors[i][j] * floors[i + 1][j] == 0 else False
+
                     wall = {
                         "begin": (begin_point_x, begin_point_z),
                         "end": (end_point_x, end_point_z),
                         "direction": 0,
                         "has_door": has_door,
+                        "out": out,
                     }
                     walls.append(wall)
                     if ((i, j), (i + 1, j)) in door_positions:
@@ -172,20 +191,23 @@ class HouseGenerator:
                     end_point_x = i * self.unit_size
                     end_point_z = j * self.unit_size
 
+                    out = True if floors[i][j] * floors[i + 1][j] == 0 else False
+
                     wall = {
                         "begin": (begin_point_x, begin_point_z),
                         "end": (end_point_x, end_point_z),
                         "direction": 1,
                         "has_door": has_door,
+                        "out": out,
                     }
                     walls.append(wall)
                     if ((i, j), (i, j + 1)) in door_positions:
                         door_holes.append(wall)
-        for wall in walls:
-            log(wall)
+        # for wall in walls:
+        #     log(wall)
         merge_walls = []
         for wall in walls:
-            log(merge_walls)
+            # log(merge_walls)
             if len(merge_walls) == 0:
                 merge_walls.append(wall)
             else:
@@ -205,9 +227,8 @@ class HouseGenerator:
                                 break
                         if not conflict:
                             merge_wall["begin"] = wall["begin"]
-                            merge_wall["has_door"] = (
-                                merge_wall["has_door"] or wall["has_door"]
-                            )
+                            merge_wall["has_door"] |= wall["has_door"]
+                            merge_wall["out"] |= wall["out"]
                             merge_flag = True
 
                     elif (
@@ -224,13 +245,11 @@ class HouseGenerator:
                                 break
                         if not conflict:
                             merge_wall["end"] = wall["end"]
-                            merge_wall["has_door"] = (
-                                merge_wall["has_door"] or wall["has_door"]
-                            )
+                            merge_wall["has_door"] |= wall["has_door"]
+                            merge_wall["out"] |= wall["out"]
                             merge_flag = True
                 if not merge_flag:
                     merge_walls.append(wall)
-        
 
         def sample_door_position(begin, end, door_size):
             begin += door_size / 2
@@ -238,19 +257,87 @@ class HouseGenerator:
             if begin > end:
                 return None
             return random.uniform(begin, end)
+        
+        def filter_window_size(asset):
+            # return True
+            if asset['size']['x'] > 1.5:
+                return False
+            if asset['size']['y'] > 2:
+                return False
+            if asset['size']['z'] > 0.5:
+                return False
+            return True
 
+        objaverse_assets = json.load(open(objaverse_path, "r"))
+        windows = [asset for asset in objaverse_assets if asset["category"] == "window" and filter_window_size(asset)]
+        window_asset = random.choice(windows)
+        window_asset = [item for item in windows if item['uid']=='e00ee30713dd4b63a16aaceee3dc8585'][0]
+        window_uid = window_asset["uid"]
+        window_prefab = get_objaverse_object(window_uid)
+        log(f"window_prefab: {window_prefab}")
+        log(f'window_asset["size"]: {window_asset["size"]}')
+        reverse_rotation = (
+            True if window_asset["size"]["x"] < window_asset["size"]["z"] else False
+        )
+        # reverse_rotation = not reverse_rotation
+
+        window_x_size = window_asset["size"]["x"]
+        window_y_size = window_asset["size"]["y"]
+        window_z_size = window_asset["size"]["z"]
+        window_x_scale = 1
+        window_y_scale = 1
+        window_z_scale = 1
+        # window_x_size = 0.5
+        # window_y_size = 1
+        # window_z_size = wall_thickness
+        # window_x_scale = window_x_size / window_asset["size"]["x"]
+        # window_y_scale = window_y_size / window_asset["size"]["y"]
+        # window_z_scale = window_z_size / window_asset["size"]["z"]
+        
+
+        WALL_OBJECT_MAX_RETRIES = 10
         doors = []
+        windows = []
+
+        def hole_intersect(hole1, hole2):
+            x1, y1 = hole1["position_xy"]
+            x2, y2 = hole2["position_xy"]
+            w1, h1 = hole1["size_xy"]
+            w2, h2 = hole2["size_xy"]
+            if x1 + w1 / 2 < x2 - w2 / 2 or x2 + w2 / 2 < x1 - w1 / 2:
+                return False
+            if y1 + h1 / 2 < y2 - h2 / 2 or y2 + h2 / 2 < y1 - h1 / 2:
+                return False
+            return True
+
+        def can_place_hole(wall, hole):
+            for h in wall["holes"]:
+                if hole_intersect(h, hole):
+                    return False
+            return True
+
         for wall in merge_walls:
+            wall["holes"] = []
+            begin_point_x, begin_point_z = wall["begin"]
+            end_point_x, end_point_z = wall["end"]
+
+            wall_center_x = (begin_point_x + end_point_x) / 2
+            wall_center_y = wall_height / 2
+            wall_center_z = (begin_point_z + end_point_z) / 2
+
+            wall["size"] = {
+                "x": (
+                    end_point_z - begin_point_z
+                    if wall["direction"] == 0
+                    else end_point_x - begin_point_x
+                ),
+                "y": wall_height,
+            }
+
             if wall["has_door"]:
-                begin_point_x, begin_point_z = wall["begin"]
-                end_point_x, end_point_z = wall["end"]
-
-                wall_center_x = (begin_point_x + end_point_x) / 2
-                wall_center_y = wall_height / 2
-                wall_center_z = (begin_point_z + end_point_z) / 2
-
                 direction = wall["direction"]
                 if direction == 0:
+
                     door_z = sample_door_position(
                         begin_point_z, end_point_z, door_x_size
                     )
@@ -300,18 +387,63 @@ class HouseGenerator:
                         door["position"][0] + door_x_size / 2,
                         door["position"][2] + door_z_size / 2 + 1,
                     )
-                
-                self.placer.insert('door',door_bbox)
+
+                self.placer.insert("door", door_bbox)
                 doors.append(door)
                 wall["holes"] = [hole]
-        
+            if wall["out"]:
+                placed_hole = None
+                for _ in range(WALL_OBJECT_MAX_RETRIES):
+                    x = random.uniform(
+                        0 + window_x_size / 2, wall["size"]["x"] - window_x_size / 2
+                    )
+                    y = random.uniform(
+                        1 + window_x_size / 2, wall["size"]["y"] - window_y_size / 2
+                    )  # 1 for window minimum height
+                    hole = {
+                        "position_xy": [
+                            x - wall["size"]["x"] / 2,
+                            y - wall["size"]["y"] / 2,
+                        ],
+                        "size_xy": [window_x_size, window_y_size],
+                    }
+                    if can_place_hole(wall, hole):
+                        wall["holes"].append(hole)
+                        placed_hole = hole
+                        break
+                if placed_hole:
+                    window_x_pos = wall_center_x + (
+                        placed_hole["position_xy"][0] if wall["direction"] == 1 else 0
+                    )
+                    window_y_pos = wall_center_y + placed_hole["position_xy"][1]
+                    window_z_pos = wall_center_z + (
+                        placed_hole["position_xy"][0] if wall["direction"] == 0 else 0
+                    )
+                    window = {
+                        "position": [window_x_pos, window_y_pos, window_z_pos],
+                        "rotation": [
+                            0,
+                            (
+                                90
+                                if (wall["direction"] == 0 and not reverse_rotation)
+                                or (wall["direction"] == 1 and reverse_rotation)
+                                else 0
+                            ),
+                            0,
+                        ],
+                        "scale": [window_x_scale, window_y_scale, window_z_scale],
+                        "type": "kinematic",
+                        "prefab": window_prefab,
+                    }
+                    windows.append(window)
+
         res["walls"] = []
         for wall in merge_walls:
             begin_point_x, begin_point_z = wall["begin"]
             end_point_x, end_point_z = wall["end"]
             direction = wall["direction"]
             if direction == 0:
-                
+
                 wall_x_size = end_point_z - begin_point_z
                 wall_z_size = wall_thickness
                 rotation = [0, 270, 0]
@@ -326,14 +458,13 @@ class HouseGenerator:
                     "position": [wall_center_x, wall_height / 2, wall_center_z],
                     "size": [wall_x_size, wall_height, wall_z_size],
                     "rotation": rotation,
-                    "material": "#FFFFFF",
-                    'holes': wall.get('holes', []),
-                    'has_door': wall.get('has_door', False)
+                    "material": wall_material,
+                    "holes": wall.get("holes", []),
+                    "has_door": wall.get("has_door", False),
                 }
             )
 
-        return res, doors
-
+        return res, doors, windows
 
     def add_human_and_agent(self, floors):
         def get_bbox_of_floor(x, z):
@@ -708,6 +839,43 @@ class HouseGenerator:
             return True, agent
         return False, None
 
+    def get_light(self):
+        lights = []
+        light_instances = []
+        for room in self.rooms.values():
+            id = room.room_id
+            polygon = list(room.room_polygon.polygon.exterior.coords)
+            min_x = min([x for x, y in polygon])
+            max_x = max([x for x, y in polygon])
+            min_z = min([y for x, y in polygon])
+            max_z = max([y for x, y in polygon])
+            center_x = (min_x + max_x) / 2
+            center_z = (min_z + max_z) / 2
+            light_position = [center_x, self.wall_height, center_z]
+            light_rotation = [0, 0, 0]
+            light = {
+                "name": "SpotLight0",
+                "lightType": "Spot",  # Point, Spot, Directional
+                "position": light_position,
+                "rotation": light_rotation,
+                "spotAngle": 180.0,
+                "useColorTemperature": True,
+                "colorTemperature": 5500.0,
+                "color": [1.0, 1.0, 1.0],
+                "intensity": 15,  # brightness
+                "range": 15,
+                "shadowType": "None",
+            }
+            lights.append(light)
+            light_instance = {
+                "position": light_position,
+                "rotation": light_rotation,
+                "size": [0.8, 0.01, 0.8],
+                "material": "Light",
+            }
+            light_instances.append(light_instance)
+        return lights, light_instances
+
     def generate(
         self,
         object_counts: Dict[str, int] = {},
@@ -734,7 +902,7 @@ class HouseGenerator:
         )
         self.placer = RectPlacer((min_x, min_z, max_x, max_z))
 
-        floors_and_walls, door_instances = self.add_floors_and_walls(
+        floors_and_walls, door_instances, window_instances = self.add_floors_and_walls(
             house_structure, room_spec, odb, prefabs
         )
 
@@ -757,21 +925,12 @@ class HouseGenerator:
             room_type_map=room_spec.room_type_map, floor_polygons=floor_polygons
         )
 
+        # add light
+        lights, light_instances = self.get_light()
+
         floors = house_structure.floorplan
         floors = np.where(floors == 1, 0, floors)
         player, agent = self.add_human_and_agent(floors)
-        # player = {
-        #     "prefab": "",
-        #     "position": [10, 0.05, 10],
-        #     "rotation": [0, np.random.uniform(0, 360), 0],
-        #     "scale": [1, 1, 1],
-        #     "parent": -1,
-        #     "type": "",
-        # }
-        # if room_num == 1:
-        #     flag, success_agent = self.add_corner_agent(max_x, max_z)
-        #     if flag:
-        #         agent = success_agent
 
         max_floor_objects = 10
 
@@ -1120,8 +1279,9 @@ class HouseGenerator:
         # They are not equal because position of a GameObject also depends on the relative center offset of the mesh within the prefab
 
         instances = (
-            door_instances
-            + object_instances
+            object_instances
+            + door_instances
+            + window_instances
             + specified_object_instances
             + small_object_instances
         )
@@ -1163,6 +1323,8 @@ class HouseGenerator:
             "room_polygon": room_polygon,
         }
         infos.update(floors_and_walls)
+        infos["walls"].extend(light_instances)
+        infos["lights"] = lights
         with open("last_scene.json", "w", encoding="utf-8") as f:
             json.dump(infos, f, ensure_ascii=False, indent=4)
         return infos
