@@ -54,7 +54,7 @@ def generate_scene(
     room_num=0,
     method="proc",
 ):
-    # room_num = 1
+    room_num = 2
     if method == "proc":
         # object_counts specifies a definite number for certain objects
         # For example, if you want to have only one instance of ChristmasTree_01 in the scene, you can set the object_counts as {"ChristmasTree_01": 1}.

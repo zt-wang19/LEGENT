@@ -84,258 +84,256 @@ class HouseGenerator:
         odb,
         prefabs,
     ):
+        res = {}
+
         room_num = len(room_spec.room_type_map)
         room_ids = set(room_spec.room_type_map.keys())
-        # room2wall = {i: np.random.choice(odb.MY_OBJECTS["wall"][:]) for i in room_ids}
-        room2wall = {i: DEFAULT_WALL_PREFAB for i in room_ids}
-        DOOR_PREFAB = odb.MY_OBJECTS["door"][0]
-        door_x_size = prefabs[DOOR_PREFAB]["size"]["x"]
-        door_y_size = prefabs[DOOR_PREFAB]["size"]["y"]
-        door_z_size = prefabs[DOOR_PREFAB]["size"]["z"]
-        log(
-            f"door_x_size: {door_x_size}, door_y_size: {door_y_size}, door_z_size: {door_z_size}"
-        )
 
-        WALL_PREFAB = room2wall[random.choice(list(room2wall.keys()))]
-        wall_x_size, wall_y_size, wall_z_size = (
-            prefabs[WALL_PREFAB]["size"]["x"],
-            prefabs[WALL_PREFAB]["size"]["y"],
-            prefabs[WALL_PREFAB]["size"]["z"],
-        )
-        log(
-            f"wall_x_size: {wall_x_size}, wall_y_size: {wall_y_size}, wall_z_size: {wall_z_size}"
-        )
-        room2wall.update({0: DEFAULT_WALL_PREFAB})
-        room2floor = {i: np.random.choice(odb.MY_OBJECTS["floor"]) for i in room_ids}
-        FLOOR_PREFAB = room2floor[random.choice(list(room2floor.keys()))]
-        floor_x_size, floor_y_size, floor_z_size = (
-            prefabs[FLOOR_PREFAB]["size"]["x"],
-            prefabs[FLOOR_PREFAB]["size"]["y"],
-            prefabs[FLOOR_PREFAB]["size"]["z"],
-        )
-        log(
-            f"floor_x_size: {floor_x_size}, floor_y_size: {floor_y_size}, floor_z_size: {floor_z_size}"
-        )
+        floor_materials = ["#FFFFFF"]
+        floor_material = random.choice(floor_materials)
+        wall_material = floor_material
+
+        door_prefab = "LowPolyInterior2_Door1_C1"
+        door_x_size = prefabs[door_prefab]["size"]["x"]
+        door_y_size = prefabs[door_prefab]["size"]["y"]
+        door_z_size = prefabs[door_prefab]["size"]["z"]
+
+        floor_thickness = 0.2
+        wall_thickness = 0.05
+        wall_height = 3
+
         floors = house_structure.floorplan
         # convert 1 in floors to 0
         floors = np.where(floors == 1, 0, floors)
         log(f"floors:\n{floors}")
+        # exit()
 
         doors = default_add_doors(odb, room_spec, house_structure)
         log(f"doors: {doors}")
         door_positions = set(doors.values())
-
-        floor_instances = []
-        # generate walls based on the 0-1 boundaries
+        floor_positions = []
         for i in range(floors.shape[0]):
             for j in range(floors.shape[1]):
                 if floors[i][j] != 0:
-                    FLOOR_PREFAB = room2floor[floors[i][j]]
+                    floor_positions.append((i, j))
+        min_floor_x = min([x for x, y in floor_positions])
+        max_floor_x = max([x for x, y in floor_positions])
+        min_floor_z = min([y for x, y in floor_positions])
+        max_floor_z = max([y for x, y in floor_positions])
 
-                    x, z = (i + 0.5 - 1) * self.unit_size, (
-                        j + 0.5 - 1
-                    ) * self.unit_size
-                    floor_instances.append(
-                        {
-                            "prefab": FLOOR_PREFAB,
-                            "position": [x, -floor_y_size / 2, z],
-                            "rotation": [0, 90, 0],
-                            "scale": [self.scale_ratio, 1, self.scale_ratio],
-                            "type": "kinematic",
-                        }
+        min_floor_x_pos = (min_floor_x - 1) * self.unit_size
+        max_floor_x_pos = (max_floor_x) * self.unit_size
+        min_floor_z_pos = (min_floor_z - 1) * self.unit_size
+        max_floor_z_pos = (max_floor_z) * self.unit_size
+
+        floor_center_x = (min_floor_x_pos + max_floor_x_pos) / 2
+        floor_center_z = (min_floor_z_pos + max_floor_z_pos) / 2
+
+        floor_x_size = max_floor_x_pos - min_floor_x_pos
+        floor_z_size = max_floor_z_pos - min_floor_z_pos
+        res["floors"] = [
+            {
+                "position": [floor_center_x, -floor_thickness / 2, floor_center_z],
+                "size": [floor_x_size, floor_thickness, floor_z_size],
+                "rotation": [0, 0, 0],
+                "material": floor_material,
+            }
+        ]
+
+        walls = []
+        door_holes = []
+        for i in range(floors.shape[0] - 1):
+            for j in range(floors.shape[1] - 1):
+                # log(f'{i} {j}')
+                # log(f'{floors[i][j]} {floors[i+1][j]} {floors[i][j+1]} {floors[i+1][j+1]}')
+
+                if i + 1 < floors.shape[0] and floors[i][j] != floors[i + 1][j]:
+
+                    has_door = True if ((i, j), (i + 1, j)) in door_positions else False
+                    begin_point_x = i * self.unit_size
+                    begin_point_z = (j - 1) * self.unit_size
+                    end_point_x = i * self.unit_size
+                    end_point_z = j * self.unit_size
+
+                    wall = {
+                        "begin": (begin_point_x, begin_point_z),
+                        "end": (end_point_x, end_point_z),
+                        "direction": 0,
+                        "has_door": has_door,
+                    }
+                    walls.append(wall)
+                    if ((i, j), (i + 1, j)) in door_positions:
+                        door_holes.append(wall)
+                if j + 1 < floors.shape[1] and floors[i][j] != floors[i][j + 1]:
+
+                    has_door = True if ((i, j), (i, j + 1)) in door_positions else False
+                    begin_point_x = (i - 1) * self.unit_size
+                    begin_point_z = j * self.unit_size
+                    end_point_x = i * self.unit_size
+                    end_point_z = j * self.unit_size
+
+                    wall = {
+                        "begin": (begin_point_x, begin_point_z),
+                        "end": (end_point_x, end_point_z),
+                        "direction": 1,
+                        "has_door": has_door,
+                    }
+                    walls.append(wall)
+                    if ((i, j), (i, j + 1)) in door_positions:
+                        door_holes.append(wall)
+        for wall in walls:
+            log(wall)
+        merge_walls = []
+        for wall in walls:
+            log(merge_walls)
+            if len(merge_walls) == 0:
+                merge_walls.append(wall)
+            else:
+                merge_flag = False
+                for merge_wall in merge_walls:
+                    if (
+                        merge_wall["begin"] == wall["end"]
+                        and merge_wall["direction"] == wall["direction"]
+                    ):
+                        conflict = False
+                        for other_wall in walls:
+                            if (
+                                other_wall["begin"] == merge_wall["begin"]
+                                or other_wall["end"] == merge_wall["begin"]
+                            ) and (other_wall["direction"] != merge_wall["direction"]):
+                                conflict = True
+                                break
+                        if not conflict:
+                            merge_wall["begin"] = wall["begin"]
+                            merge_wall["has_door"] = (
+                                merge_wall["has_door"] or wall["has_door"]
+                            )
+                            merge_flag = True
+
+                    elif (
+                        merge_wall["end"] == wall["begin"]
+                        and merge_wall["direction"] == wall["direction"]
+                    ):
+                        conflict = False
+                        for other_wall in walls:
+                            if (
+                                other_wall["begin"] == merge_wall["end"]
+                                or other_wall["end"] == merge_wall["end"]
+                            ) and (other_wall["direction"] != merge_wall["direction"]):
+                                conflict = True
+                                break
+                        if not conflict:
+                            merge_wall["end"] = wall["end"]
+                            merge_wall["has_door"] = (
+                                merge_wall["has_door"] or wall["has_door"]
+                            )
+                            merge_flag = True
+                if not merge_flag:
+                    merge_walls.append(wall)
+        
+
+        def sample_door_position(begin, end, door_size):
+            begin += door_size / 2
+            end -= door_size / 2
+            if begin > end:
+                return None
+            return random.uniform(begin, end)
+
+        doors = []
+        for wall in merge_walls:
+            if wall["has_door"]:
+                begin_point_x, begin_point_z = wall["begin"]
+                end_point_x, end_point_z = wall["end"]
+
+                wall_center_x = (begin_point_x + end_point_x) / 2
+                wall_center_y = wall_height / 2
+                wall_center_z = (begin_point_z + end_point_z) / 2
+
+                direction = wall["direction"]
+                if direction == 0:
+                    door_z = sample_door_position(
+                        begin_point_z, end_point_z, door_x_size
                     )
-                    # add ceiling
-                    # floor_instances.append(
-                    #     {
-                    #         "prefab": FLOOR_PREFAB,
-                    #         "position": [x, wall_y_size + floor_y_size / 2, z],
-                    #         "rotation": [0, 90, 0],
-                    #         "scale": [self.scale_ratio, 1, self.scale_ratio],
-                    #         "type": "kinematic",
-                    #     }
-                    # )
+                    door = {
+                        "position": [begin_point_x, door_y_size / 2, door_z],
+                        "rotation": [0, 90, 0],
+                        "scale": [1, 1, 1],
+                        "type": "kinematic",
+                        "prefab": door_prefab,
+                    }
+                    hole = {
+                        "position_xy": [
+                            door_z - wall_center_z,
+                            door_y_size / 2 - wall_center_y,
+                        ],
+                        "size_xy": [door_x_size, door_y_size],
+                    }
+                    # wall["holes"] = [hole]
+                    door_bbox = (
+                        door["position"][0] - door_z_size / 2 - 1,
+                        door["position"][2] - door_x_size / 2,
+                        door["position"][0] + door_z_size / 2 + 1,
+                        door["position"][2] + door_x_size / 2,
+                    )
+                else:
+                    door_x = sample_door_position(
+                        begin_point_x, end_point_x, door_x_size
+                    )
+                    door = {
+                        "position": [door_x, door_y_size / 2, begin_point_z],
+                        "rotation": [0, 0, 0],
+                        "scale": [1, 1, 1],
+                        "type": "kinematic",
+                        "prefab": door_prefab,
+                    }
+                    hole = {
+                        "position_xy": [
+                            door_x - wall_center_x,
+                            door_y_size / 2 - wall_center_y,
+                        ],
+                        "size_xy": [door_x_size, door_y_size],
+                    }
+                    # wall["holes"] = [hole]
+                    door_bbox = (
+                        door["position"][0] - door_x_size / 2,
+                        door["position"][2] - door_z_size / 2 - 1,
+                        door["position"][0] + door_x_size / 2,
+                        door["position"][2] + door_z_size / 2 + 1,
+                    )
+                
+                self.placer.insert('door',door_bbox)
+                doors.append(door)
+                wall["holes"] = [hole]
+        
+        res["walls"] = []
+        for wall in merge_walls:
+            begin_point_x, begin_point_z = wall["begin"]
+            end_point_x, end_point_z = wall["end"]
+            direction = wall["direction"]
+            if direction == 0:
+                
+                wall_x_size = end_point_z - begin_point_z
+                wall_z_size = wall_thickness
+                rotation = [0, 270, 0]
+            else:
+                wall_x_size = end_point_x - begin_point_x
+                wall_z_size = wall_thickness
+                rotation = [0, 0, 0]
+            wall_center_x = (begin_point_x + end_point_x) / 2
+            wall_center_z = (begin_point_z + end_point_z) / 2
+            res["walls"].append(
+                {
+                    "position": [wall_center_x, wall_height / 2, wall_center_z],
+                    "size": [wall_x_size, wall_height, wall_z_size],
+                    "rotation": rotation,
+                    "material": "#FFFFFF",
+                    'holes': wall.get('holes', []),
+                    'has_door': wall.get('has_door', False)
+                }
+            )
 
-                WALL_PREFAB = room2wall[floors[i][j]]
-                wall_x_size, wall_y_size, wall_z_size = (
-                    prefabs[WALL_PREFAB]["size"]["x"],
-                    prefabs[WALL_PREFAB]["size"]["y"],
-                    prefabs[WALL_PREFAB]["size"]["z"],
-                )
+        return res, doors
 
-                WALL_WITH_DOOR_PREFAB = WALL_PREFAB[:-1] + "2"
-
-                DOOR_SCALE = [self.scale_ratio, 1, 1]
-                a = floors[i][j]
-                if i < floors.shape[0] - 1:
-                    a_col = floors[i + 1][j]
-
-                    if a != a_col:
-                        x = i + 1 - 1
-                        z = j + 0.5 - 1
-                        y_rot = 90
-
-                        x = x * self.unit_size
-                        z = z * self.unit_size
-
-                        left_x = x - wall_z_size / 4
-                        right_x = x + wall_z_size / 4
-
-                        left_wall_prefab = room2wall[floors[i][j]]
-                        right_wall_prefab = room2wall[floors[i + 1][j]]
-
-                        scale = [self.scale_ratio, 1, 0.5]
-                        left_scale = [
-                            self.scale_ratio,
-                            self.align_wall_height_scale(left_wall_prefab),
-                            0.5,
-                        ]
-                        right_scale = [
-                            self.scale_ratio,
-                            self.align_wall_height_scale(right_wall_prefab),
-                            0.5,
-                        ]
-
-                        left_wall_with_door_prefab = left_wall_prefab[:-1] + "2"
-                        right_wall_with_door_prefab = right_wall_prefab[:-1] + "2"
-
-                        left_rotation = 270
-                        right_rotation = 90
-                        door_rotation = 270
-
-                        door = None
-                        if ((i, j), (i + 1, j)) in door_positions:
-                            left_wall = self.format_object(
-                                left_wall_with_door_prefab,
-                                (left_x, 1.5, z),
-                                left_rotation,
-                                left_scale,
-                            )
-                            right_wall = self.format_object(
-                                right_wall_with_door_prefab,
-                                (right_x, 1.5, z),
-                                right_rotation,
-                                right_scale,
-                            )
-                            door = self.format_object(
-                                DOOR_PREFAB,
-                                (x, door_y_size / 2, z),
-                                door_rotation,
-                                DOOR_SCALE,
-                            )
-                        else:
-                            left_wall = self.format_object(
-                                left_wall_prefab,
-                                (left_x, 1.5, z),
-                                left_rotation,
-                                left_scale,
-                            )
-                            right_wall = self.format_object(
-                                right_wall_prefab,
-                                (right_x, 1.5, z),
-                                right_rotation,
-                                right_scale,
-                            )
-
-                        if floors[i][j] != 0:
-                            floor_instances.append(left_wall)
-                        if floors[i + 1][j] != 0:
-                            floor_instances.append(right_wall)
-                        if door:
-                            floor_instances.append(door)
-                            door_size = prefabs[DOOR_PREFAB]["size"]
-                            door_bbox = (
-                                x - door_size["x"] / 2 - 1.0,
-                                z - door_size["z"] / 2 - 0.3,
-                                x + door_size["x"] / 2 + 1.2,  # 1.2 is length of door
-                                z + door_size["z"] / 2 + 0.3,
-                            )
-                            self.placer.insert(DOOR_PREFAB, door_bbox)
-
-                if j < floors.shape[1] - 1:
-                    a_row = floors[i][j + 1]
-                    if a != a_row:
-                        x = i + 0.5 - 1
-                        z = j + 1 - 1
-                        y_rot = 0
-
-                        x = x * self.unit_size
-                        z = z * self.unit_size
-
-                        up_z = z - wall_z_size / 4
-                        down_z = z + wall_z_size / 4
-
-                        up_wall_prefab = room2wall[floors[i][j]]
-                        down_wall_prefab = room2wall[floors[i][j + 1]]
-
-                        scale = [self.scale_ratio, 1, 0.5]
-                        up_scale = [
-                            self.scale_ratio,
-                            self.align_wall_height_scale(up_wall_prefab),
-                            0.5,
-                        ]
-                        down_scale = [
-                            self.scale_ratio,
-                            self.align_wall_height_scale(down_wall_prefab),
-                            0.5,
-                        ]
-
-                        up_wall_with_door_prefab = up_wall_prefab[:-1] + "2"
-                        down_wall_with_door_prefab = down_wall_prefab[:-1] + "2"
-
-                        door = None
-
-                        up_rotation = 180
-                        down_rotation = 0
-                        door_rotation = 180
-
-                        if ((i, j), (i, j + 1)) in door_positions:
-                            up_wall = self.format_object(
-                                up_wall_with_door_prefab,
-                                (x, 1.5, up_z),
-                                up_rotation,
-                                up_scale,
-                            )
-                            down_wall = self.format_object(
-                                down_wall_with_door_prefab,
-                                (x, 1.5, down_z),
-                                down_rotation,
-                                down_scale,
-                            )
-                            door = self.format_object(
-                                DOOR_PREFAB,
-                                (x, door_y_size / 2, z),
-                                door_rotation,
-                                DOOR_SCALE,
-                            )
-                        else:
-                            up_wall = self.format_object(
-                                up_wall_prefab,
-                                (x, 1.5, up_z),
-                                up_rotation,
-                                up_scale,
-                            )
-                            down_wall = self.format_object(
-                                down_wall_prefab,
-                                (x, 1.5, down_z),
-                                down_rotation,
-                                down_scale,
-                            )
-                        if floors[i][j] != 0:
-                            floor_instances.append(up_wall)
-                        if floors[i][j + 1] != 0:
-                            floor_instances.append(down_wall)
-                        if door:
-                            floor_instances.append(door)
-                            door_size = prefabs[DOOR_PREFAB]["size"]
-                            door_bbox = (
-                                x - door_size["x"] / 2 - 0.3,
-                                z - door_size["z"] / 2 - 1.0,
-                                x + door_size["x"] / 2 + 1.2,
-                                z + door_size["z"] / 2 + 0.3,
-                            )
-                            self.placer.insert(DOOR_PREFAB, door_bbox)
-
-        return floor_instances, floors
 
     def add_human_and_agent(self, floors):
         def get_bbox_of_floor(x, z):
@@ -438,8 +436,8 @@ class HouseGenerator:
         anchor_type: str,
         anchor_delta: int,
         odb: ObjectDB,
-        spawnable_assets, # pd.DataFrame
-        spawnable_asset_groups, # pd.DataFrame
+        spawnable_assets,  # pd.DataFrame
+        spawnable_asset_groups,  # pd.DataFrame
         priority_asset_types: List[str],
     ):
         set_rotated = None
@@ -642,7 +640,7 @@ class HouseGenerator:
 
             data.append(group_data)
 
-        return pd.DataFrame(data) 
+        return pd.DataFrame(data)
 
     def prefab_fit_rectangle(self, prefab_size, rectangle):
         x0, z0, x1, z1 = rectangle
@@ -736,7 +734,7 @@ class HouseGenerator:
         )
         self.placer = RectPlacer((min_x, min_z, max_x, max_z))
 
-        floor_instances, floors = self.add_floors_and_walls(
+        floors_and_walls, door_instances = self.add_floors_and_walls(
             house_structure, room_spec, odb, prefabs
         )
 
@@ -759,6 +757,8 @@ class HouseGenerator:
             room_type_map=room_spec.room_type_map, floor_polygons=floor_polygons
         )
 
+        floors = house_structure.floorplan
+        floors = np.where(floors == 1, 0, floors)
         player, agent = self.add_human_and_agent(floors)
         # player = {
         #     "prefab": "",
@@ -1120,7 +1120,7 @@ class HouseGenerator:
         # They are not equal because position of a GameObject also depends on the relative center offset of the mesh within the prefab
 
         instances = (
-            floor_instances
+            door_instances
             + object_instances
             + specified_object_instances
             + small_object_instances
@@ -1143,13 +1143,15 @@ class HouseGenerator:
             z_center = sum([z for _, z in polygon]) / len(polygon)
             x_size = max([x for x, _ in polygon]) - min([x for x, _ in polygon])
             z_size = max([z for _, z in polygon]) - min([z for _, z in polygon])
-            room_polygon.append({
-                'room_id':id,
-                'room_type': room.room_type,
-                'position': [x_center, 1.5, z_center],
-                'size': [x_size,3, z_size],
-                'polygon':polygon
-            })
+            room_polygon.append(
+                {
+                    "room_id": id,
+                    "room_type": room.room_type,
+                    "position": [x_center, 1.5, z_center],
+                    "size": [x_size, 3, z_size],
+                    "polygon": polygon,
+                }
+            )
             # print(f'room {id} polygon: {polygon}')
 
         infos = {
@@ -1160,6 +1162,7 @@ class HouseGenerator:
             "center": center,
             "room_polygon": room_polygon,
         }
+        infos.update(floors_and_walls)
         with open("last_scene.json", "w", encoding="utf-8") as f:
             json.dump(infos, f, ensure_ascii=False, indent=4)
         return infos
